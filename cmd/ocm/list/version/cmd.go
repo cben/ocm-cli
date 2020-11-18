@@ -19,10 +19,10 @@ package version
 import (
 	"fmt"
 	"os"
-	"strings"
+	"text/tabwriter"
 
 	"github.com/openshift-online/ocm-cli/pkg/ocm"
-	v1 "github.com/openshift-online/ocm-sdk-go/clustersmgmt/v1"
+	"github.com/openshift-online/ocm-cli/pkg/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -44,39 +44,23 @@ func run(cmd *cobra.Command, argv []string) error {
 		return fmt.Errorf("Failed to create OCM connection: %v", err)
 	}
 	defer connection.Close()
-	// Get the client for the resource that manages the versions:
-	resource := connection.ClustersMgmt().V1().Versions()
 
-	size := 100
-	index := 1
-	for {
-		// Fetch the next page:
-		request := resource.List().Size(size).Page(index)
-		//flags.ApplyHeaderFlag(request, args.header)
-		var search strings.Builder
-		request.Search(strings.TrimSpace(search.String()))
-		response, err := request.Send()
-		if err != nil {
-			return fmt.Errorf("Can't retrieve versions: %v", err)
-		}
-
-		response.Items().Each(func(version *v1.Version) bool {
-			if version.Enabled() {
-				// strip leading "openshift-v" string
-				v := strings.Replace(version.ID(), "openshift-v", "", 1)
-				fmt.Fprintf(os.Stdout, "%s\n", v)
-			}
-			return true
-		})
-
-		// If the number of fetched results is less than requested, then
-		// this was the last page, otherwise process the next one:
-		if response.Size() < size {
-			break
-		}
-
-		index++
+	client := connection.ClustersMgmt().V1()
+	versions, defaultVersion, err := provider.GetEnabledVersions(client)
+	if err != nil {
+		return fmt.Errorf("Can't retrieve versions: %v", err)
 	}
+
+	writer := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', tabwriter.TabIndent)
+	fmt.Fprint(writer, "DEFAULT?\tVERSION\n")
+	for _, v := range versions {
+		isDefault := " "
+		if v == defaultVersion {
+			isDefault = "default"
+		}
+		fmt.Fprintf(writer, "%s\t%s\n", isDefault, v)
+	}
+	writer.Flush()
 
 	return nil
 }
