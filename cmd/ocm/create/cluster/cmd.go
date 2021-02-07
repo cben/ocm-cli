@@ -185,21 +185,21 @@ func init() {
 		net.IPNet{},
 		"Block of IP addresses used by OpenShift while installing the cluster, for example \"10.0.0.0/16\".",
 	)
-	arguments.SetQuestion(fs, "machine-cidr", "Machine CIDR:")
+	arguments.SetQuestion(fs, "machine-cidr", "Machine CIDR (optional):")
 	fs.IPNetVar(
 		&args.serviceCIDR,
 		"service-cidr",
 		net.IPNet{},
 		"Block of IP addresses for services, for example \"172.30.0.0/16\".",
 	)
-	arguments.SetQuestion(fs, "service-cidr", "Service CIDR:")
+	arguments.SetQuestion(fs, "service-cidr", "Service CIDR (optional):")
 	fs.IPNetVar(
 		&args.podCIDR,
 		"pod-cidr",
 		net.IPNet{},
 		"Block of IP addresses from which Pod IP addresses are allocated, for example \"10.128.0.0/14\".",
 	)
-	arguments.SetQuestion(fs, "pod-cidr", "Pod CIDR:")
+	arguments.SetQuestion(fs, "pod-cidr", "Pod CIDR (optional):")
 	fs.IntVar(
 		&args.hostPrefix,
 		"host-prefix",
@@ -207,6 +207,7 @@ func init() {
 		"Subnet prefix length to assign to each individual node. For example, if host prefix is set "+
 			"to \"23\", then each node is assigned a /23 subnet out of the given CIDR.",
 	)
+	arguments.SetQuestion(fs, "host-prefix", "Host prefix (optional):")
 }
 
 func osdProviderOptions(_ *sdk.Connection) ([]arguments.Option, error) {
@@ -385,6 +386,12 @@ func preRun(cmd *cobra.Command, argv []string) error {
 	err = arguments.PromptInt(fs, "compute-nodes", validateComputeNodes)
 	if err != nil {
 		return err
+	}
+	// TEMP
+	fmt.Printf("nodes flag = %#v\nvalue = %d\n\n", fs.Lookup("compute-nodes"), args.computeNodes)
+	if !fs.Changed("compute-nodes") {
+		args.computeNodes = minComputeNodes(args.ccs.Enabled, args.multiAZ)
+		fmt.Printf("nodes flag = %#v\nvalue = %d\n\n", fs.Lookup("compute-nodes"), args.computeNodes)
 	}
 
 	err = promptNetwork(fs)

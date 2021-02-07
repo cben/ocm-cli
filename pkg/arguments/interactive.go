@@ -32,7 +32,10 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 )
 
-const questionAnnotationKey = "flag_survey_question"
+const (
+	questionAnnotationKey     = "flag_survey_question"
+	optionalHintAnnotationKey = "flag_survey_optional_hint"
+)
 
 // AddFlag adds the interactive flag to the given set of command line flags.
 func AddInteractiveFlag(flags *pflag.FlagSet, value *bool) {
@@ -50,7 +53,14 @@ func SetQuestion(fs *pflag.FlagSet, flagName, question string) {
 	fs.SetAnnotation(flagName, questionAnnotationKey, []string{question})
 }
 
-// GetQuestion returns the text set by SetQuestion, or fallback based on flag name.
+// SetOptionalHint allows user to "give no answer" to a prompt (by just pressing Enter),
+// in which case the flag will not be set (.Changed remains false, value unchanged).
+// The hint is shown to describe the default behavior in case of no answer.
+func SetOptionalHint(fs *pflag.FlagSet, flagName string, hint string) {
+	fs.SetAnnotation(flagName, optionalHintAnnotationKey, []string{hint})
+}
+
+// getQuestion returns the text set by SetQuestion, or fallback based on flag name.
 func getQuestion(flag *pflag.Flag) string {
 	values, ok := flag.Annotations[questionAnnotationKey]
 	if ok && len(values) >= 1 {
@@ -60,6 +70,15 @@ func getQuestion(flag *pflag.Flag) string {
 	words := strings.Split(flag.Name, "-")
 	words[0] = strings.Title(words[0])
 	return strings.Join(words, " ") + ":"
+}
+
+// getOptionalHint returns the hint for an optional prompt, and whether it is optional.
+func getOptionalHint(flag *pflag.Flag) (string, bool) {
+	values, ok := flag.Annotations[questionAnnotationKey]
+	if ok && len(values) >= 1 {
+		return values[0], true
+	}
+	return "", false
 }
 
 // OptionsFunc is a signature for functions generating arrays of values.
@@ -159,6 +178,25 @@ func PromptBool(fs *pflag.FlagSet, flagName string) error {
 	})
 }
 
+/*
+Walk:
+  north
+> south
+
+- prompt "Flag: [? for help] (DEFAULT)"
+- always set the flag
+
+arguments.SetOptionalHint(fs, "walk", "stay in place")
+Walk:
+> (stay in place)
+  north
+  south
+
+- prompt "Flag (optional): [? for help]"
+- if user presses Enter, do NOT set the flag (.Changed() will remain false)
+- if user typed/selected something, set the flag
+*/
+
 // PromptInt sets an integer flag value interactively, unless already set.
 // validation func is optional, and runs after the flag is already set.
 // Does nothing in non-interactive mode. TODO: always validate, prompt if bad.
@@ -171,15 +209,28 @@ func PromptInt(fs *pflag.FlagSet, flagName string, validate func() error) error 
 
 	return ifInteractive(fs, func() error {
 		if !flag.Changed {
-			var response int
-			prompt := &survey.Input{
-				Message: getQuestion(flag),
-				Help:    flag.Usage,
-				Default: flag.Value.String(),
+			question := getQuestion(flag)
+			defaultValue := flag.Value.String()
+			hint, isOptional := getOptionalHint(flag)
+			if isOptional {
+				question = fmt.Sprintf("%s (%s)", question, hint)
+				defaultValue = ""
 			}
+			prompt := &survey.Input{
+				Message: question,
+				Help:    flag.Usage,
+				Default: defaultValue,
+			}
+
 			// Set() flag as side effect of validation => prompts again if invalid.
 			validator := func(val interface{}) error {
 				str := val.(string)
+				fmt.Printf("\n>>>> str=%q\n\n", str)
+				if isOptional && str == "" {
+					// Allow not setting the flag at all by pressing Enter.
+					return nil
+				}
+
 				err := fs.Set(flagName, str)
 				if err != nil {
 					return err
@@ -189,6 +240,7 @@ func PromptInt(fs *pflag.FlagSet, flagName string, validate func() error) error 
 				}
 				return nil
 			}
+			var response string
 			return survey.AskOne(prompt, &response, survey.WithValidator(validator))
 		}
 		return nil
